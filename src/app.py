@@ -8,18 +8,21 @@ for extracurricular activities at Mergington High School.
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
-import os
+from pydantic import BaseModel, EmailStr
 from pathlib import Path
+from threading import Lock
 
-app = FastAPI(title="Mergington High School API",
-              description="API for viewing and signing up for extracurricular activities")
+app = FastAPI(
+    title="Mergington High School API",
+    description="API for viewing and signing up for extracurricular activities"
+)
 
-# Mount the static files directory
 current_dir = Path(__file__).parent
-app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
-          "static")), name="static")
+app.mount("/static", StaticFiles(directory=current_dir / "static"), name="static")
 
-# In-memory activity database
+class SignupRequest(BaseModel):
+    email: EmailStr
+
 activities = {
     "Chess Club": {
         "description": "Learn strategies and compete in chess tournaments",
@@ -41,27 +44,35 @@ activities = {
     }
 }
 
+activities_lock = Lock()
 
 @app.get("/")
 def root():
     return RedirectResponse(url="/static/index.html")
 
-
 @app.get("/activities")
 def get_activities():
     return activities
 
-
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
-    """Sign up a student for an activity"""
-    # Validate activity exists
+def signup_for_activity(activity_name: str, request: SignupRequest):
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    # Get the specific activity
     activity = activities[activity_name]
+    email = request.email
 
-    # Add student
-    activity["participants"].append(email)
+    if email in activity["participants"]:
+        raise HTTPException(status_code=409, detail="Already signed up")
+
+    if len(activity["participants"]) >= activity["max_participants"]:
+        raise HTTPException(status_code=409, detail="Activity is full")
+
+    with activities_lock:
+        if email in activity["participants"]:
+            raise HTTPException(status_code=409, detail="Already signed up")
+        if len(activity["participants"]) >= activity["max_participants"]:
+            raise HTTPException(status_code=409, detail="Activity is full")
+        activity["participants"].append(email)
+
     return {"message": f"Signed up {email} for {activity_name}"}
